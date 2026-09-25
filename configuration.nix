@@ -105,6 +105,10 @@ in
     vim
     vis
     brightnessctl
+    # выбор устройства вывода звука (колонки/hdmi монитора) и громкости
+    pavucontrol
+    # alsamixer: проверить, не выключен ли звук на самой звуковой карте
+    alsa-utils
     spotify
     inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default
   ];
@@ -115,6 +119,8 @@ in
   services.pipewire = {
     enable = true;
     alsa.enable = true;
+    # звук в 32-битных программах (steam, игры через proton/wine)
+    alsa.support32Bit = true;
     pulse.enable = true;
     wireplumber.enable = true;
   };
@@ -210,7 +216,7 @@ in
     initialPassword = "nixos";
     isNormalUser = true;
     shell = pkgs.zsh;
-    extraGroups = [ "wheel" "video" "input" ];
+    extraGroups = [ "wheel" "video" "input" "audio" ];
   };
 
   programs.zsh.enable = true;
