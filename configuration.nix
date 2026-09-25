@@ -5,9 +5,8 @@ let
   hasHardware = builtins.pathExists ./hardware-configuration.nix;
 in
 {
-  # железо и диски генерируются на самой машине и в репозиторий не входят:
+  # железо и диски генерируются на самой машине:
   #   sudo nixos-generate-config --show-hardware-config > /etc/nixos/hardware-configuration.nix
-  #   git -C /etc/nixos add hardware-configuration.nix   # flake видит только файлы, известные git
   # без файла сборка сразу останавливается с понятной подсказкой
   imports =
     if hasHardware then
@@ -15,14 +14,10 @@ in
     else
       throw ''
 
-        нет hardware-configuration.nix (или git о нём не знает - flake видит только файлы из git).
-        сгенерируй и добавь в git:
-          cd /etc/nixos
-          sudo nixos-generate-config --show-hardware-config > hardware-configuration.nix
-          git add hardware-configuration.nix
+        нет /etc/nixos/hardware-configuration.nix, сгенерируй его:
+          sudo nixos-generate-config --show-hardware-config > /etc/nixos/hardware-configuration.nix
         при установке с флешки:
           nixos-generate-config --root /mnt --show-hardware-config > /mnt/etc/nixos/hardware-configuration.nix
-          git -C /mnt/etc/nixos add hardware-configuration.nix
       '';
 
   networking.hostName = "nixbox";
