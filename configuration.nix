@@ -11,7 +11,7 @@ in
   # без файла сборка сразу останавливается с понятной подсказкой
   imports =
     if hasHardware then
-      [ ./hardware-configuration.nix ]
+      [ ./hardware-configuration.nix ./gaming.nix ]
     else
       throw ''
 
