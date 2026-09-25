@@ -1974,6 +1974,320 @@ in
     }
   '';
 
+  # --- ползунок громкости для узла pipewire: клик по иконке - mute, тянуть/колесо - громкость ---
+  xdg.configFile."quickshell/VolumeSlider.qml".text = ''
+    import QtQuick
+    import QtQuick.Layouts
+
+    RowLayout {
+        id: s
+        property var node: null
+        property string icon: ""
+        property string mutedIcon: "󰖁"
+        property color accent: Theme.blue
+
+        readonly property var audio: node?.audio ?? null
+        readonly property bool muted: audio?.muted ?? false
+        readonly property real value: Math.max(0, Math.min(1, audio?.volume ?? 0))
+
+        spacing: 8
+        opacity: audio ? 1 : 0.5
+
+        function setFrom(x, w) {
+            if (!audio) return;
+            audio.volume = Math.max(0, Math.min(1, x / w));
+            if (audio.muted) audio.muted = false;
+        }
+
+        IconButton {
+            icon: s.muted ? s.mutedIcon : s.icon
+            onClicked: if (s.audio) s.audio.muted = !s.audio.muted
+        }
+
+        Item {
+            id: area
+            Layout.fillWidth: true
+            implicitHeight: 28
+
+            Rectangle {
+                id: track
+                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter }
+                height: 8
+                radius: 4
+                color: Theme.track
+
+                Rectangle {
+                    width: parent.width * s.value
+                    height: parent.height
+                    radius: 4
+                    color: s.muted ? Theme.fgDim : s.accent
+                    Behavior on color { ColorAnimation { duration: 140 } }
+                    Behavior on width {
+                        enabled: !drag.pressed
+                        NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+                    }
+                }
+            }
+
+            // ручка
+            Rectangle {
+                width: drag.pressed || drag.containsMouse ? 18 : 14
+                height: width
+                radius: width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                x: Math.max(0, Math.min(area.width - width, area.width * s.value - width / 2))
+                color: Theme.fg
+                border.width: 3
+                border.color: s.muted ? Theme.fgDim : s.accent
+                Behavior on width { NumberAnimation { duration: 120 } }
+            }
+
+            MouseArea {
+                id: drag
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onPressed: mouse => s.setFrom(mouse.x, width)
+                onPositionChanged: mouse => { if (pressed) s.setFrom(mouse.x, width); }
+                onWheel: event => {
+                    if (!s.audio) return;
+                    const step = event.angleDelta.y > 0 ? 0.05 : -0.05;
+                    s.audio.volume = Math.max(0, Math.min(1, s.audio.volume + step));
+                }
+            }
+        }
+
+        Glyph {
+            Layout.preferredWidth: 42
+            horizontalAlignment: Text.AlignRight
+            text: s.muted ? "mute" : Math.round(s.value * 100) + "%"
+            color: s.muted ? Theme.fgDim : Theme.fg
+            font.pixelSize: 12
+        }
+    }
+  '';
+
+  # --- строка устройства в меню звука: клик - сделать устройством по умолчанию ---
+  xdg.configFile."quickshell/AudioDevice.qml".text = ''
+    import QtQuick
+    import QtQuick.Layouts
+
+    Rectangle {
+        id: row
+        property var node: null
+        property bool current: false
+        property string icon: "󰓃"
+        signal picked()
+
+        Layout.fillWidth: true
+        implicitHeight: 40
+        radius: 10
+        color: current ? Qt.tint(Theme.bg, Qt.rgba(Theme.blue.r, Theme.blue.g, Theme.blue.b, 0.14))
+            : area.containsMouse ? Theme.bgHover : "transparent"
+        Behavior on color { ColorAnimation { duration: 120 } }
+
+        RowLayout {
+            anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
+            spacing: 12
+
+            Glyph {
+                Layout.preferredWidth: 18
+                horizontalAlignment: Text.AlignHCenter
+                text: row.icon
+                font.pixelSize: 15
+                color: row.current ? Theme.blue : Theme.fgDim
+            }
+            Glyph {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: (row.node?.description || row.node?.nickname || row.node?.name || "").toLowerCase()
+                color: row.current ? Theme.blue : Theme.fg
+                font.bold: row.current
+            }
+            Glyph {
+                visible: row.current
+                text: ""
+                font.pixelSize: 13
+                color: Theme.mint
+            }
+        }
+
+        MouseArea {
+            id: area
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: if (!row.current) row.picked()
+        }
+    }
+  '';
+
+  # --- меню звука: громкость, выбор колонок/наушников, микрофон, громкость приложений ---
+  xdg.configFile."quickshell/AudioMenu.qml".text = ''
+    import Quickshell
+    import Quickshell.Wayland
+    import Quickshell.Services.Pipewire
+    import QtQuick
+    import QtQuick.Layouts
+
+    PanelWindow {
+        id: menu
+        property var barWindow
+        property bool open: false
+        property int leftOffset: 12
+        readonly property int menuWidth: 400
+
+        readonly property var nodes: Pipewire.nodes.values.filter(n => n.audio !== null)
+        readonly property var sinks: nodes.filter(n => n.isSink && !n.isStream)
+        readonly property var sources: nodes.filter(n => !n.isSink && !n.isStream)
+        // приложения, которые сейчас играют звук
+        readonly property var streams: nodes.filter(n => n.isStream && !n.isSink)
+
+        readonly property var sink: Pipewire.defaultAudioSink
+        readonly property var source: Pipewire.defaultAudioSource
+
+        function deviceIcon(n) {
+            const name = (n?.name || "").toLowerCase();
+            const desc = (n?.description || "").toLowerCase();
+            if (name.indexOf("hdmi") >= 0 || desc.indexOf("hdmi") >= 0 || desc.indexOf("displayport") >= 0)
+                return "󰍹";   // монитор
+            if (name.indexOf("headphone") >= 0 || name.indexOf("headset") >= 0 || desc.indexOf("headphone") >= 0
+                || name.indexOf("bluez") >= 0)
+                return "";         // наушники
+            return "󰓃";       // колонки
+        }
+
+        function appName(n) {
+            const p = n?.properties ?? {};
+            return (p["application.name"] || n?.description || n?.name || "app").toLowerCase();
+        }
+
+        // громкость/mute обновляются только у отслеживаемых узлов
+        PwObjectTracker { objects: menu.open ? Pipewire.nodes.values : [] }
+
+        visible: open
+        screen: barWindow.screen
+        anchors { top: true; bottom: true; left: true; right: true }
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.namespace: "quickshell-audio"
+        WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        color: "transparent"
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: menu.open = false
+        }
+
+        Rectangle {
+            x: menu.leftOffset
+            y: Theme.pillH + 18
+            width: menu.menuWidth
+            height: content.implicitHeight + 32
+            radius: 16
+            color: Theme.bgMenu
+            border.color: Theme.border
+            border.width: 1
+
+            MouseArea { anchors.fill: parent }
+
+            Item {
+                anchors.fill: parent
+                focus: true
+                Keys.onEscapePressed: menu.open = false
+            }
+
+            ColumnLayout {
+                id: content
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                spacing: 8
+
+                // ---------- заголовок ----------
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Glyph { text: ""; color: Theme.blue; font.pixelSize: 16 }
+                    Glyph { text: "sound"; font.pixelSize: 16; Layout.fillWidth: true }
+                    // полный микшер
+                    IconButton {
+                        icon: ""
+                        onClicked: {
+                            menu.open = false;
+                            Quickshell.execDetached([ "pavucontrol" ]);
+                        }
+                    }
+                }
+
+                // ---------- вывод ----------
+                Glyph { text: "output"; color: Theme.fgDim; font.pixelSize: 11; Layout.topMargin: 4 }
+                VolumeSlider {
+                    Layout.fillWidth: true
+                    node: menu.sink
+                    icon: menu.deviceIcon(menu.sink)
+                }
+                Repeater {
+                    model: menu.sinks
+                    AudioDevice {
+                        required property var modelData
+                        node: modelData
+                        icon: menu.deviceIcon(modelData)
+                        current: menu.sink !== null && modelData.id === menu.sink.id
+                        onPicked: Pipewire.preferredDefaultAudioSink = modelData
+                    }
+                }
+
+                // ---------- микрофон ----------
+                Rectangle { Layout.fillWidth: true; Layout.topMargin: 6; implicitHeight: 1; color: Theme.border; visible: menu.sources.length > 0 }
+                Glyph { text: "microphone"; color: Theme.fgDim; font.pixelSize: 11; visible: menu.sources.length > 0 }
+                VolumeSlider {
+                    Layout.fillWidth: true
+                    visible: menu.source !== null
+                    node: menu.source
+                    icon: ""
+                    mutedIcon: ""
+                    accent: Theme.pink
+                }
+                Repeater {
+                    // выбор микрофона нужен, только если их больше одного
+                    model: menu.sources.length > 1 ? menu.sources : []
+                    AudioDevice {
+                        required property var modelData
+                        node: modelData
+                        icon: ""
+                        current: menu.source !== null && modelData.id === menu.source.id
+                        onPicked: Pipewire.preferredDefaultAudioSource = modelData
+                    }
+                }
+
+                // ---------- приложения ----------
+                Rectangle { Layout.fillWidth: true; Layout.topMargin: 6; implicitHeight: 1; color: Theme.border; visible: menu.streams.length > 0 }
+                Glyph { text: "apps"; color: Theme.fgDim; font.pixelSize: 11; visible: menu.streams.length > 0 }
+                Repeater {
+                    model: menu.streams
+                    ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 0
+                        Glyph {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 42
+                            elide: Text.ElideRight
+                            text: menu.appName(modelData)
+                            font.pixelSize: 12
+                        }
+                        VolumeSlider {
+                            Layout.fillWidth: true
+                            node: modelData
+                            icon: ""
+                            accent: Theme.mint
+                        }
+                    }
+                }
+            }
+        }
+    }
+  '';
+
   xdg.configFile."quickshell/shell.qml".text = ''
     import Quickshell
     import Quickshell.Io
@@ -1988,7 +2302,7 @@ in
     ShellRoot {
         id: root
 
-        PwObjectTracker { objects: [ Pipewire.defaultAudioSink ] }
+        PwObjectTracker { objects: [ Pipewire.defaultAudioSink, Pipewire.defaultAudioSource ] }
 
         SystemClock { id: clock; precision: SystemClock.Minutes }
 
@@ -2075,6 +2389,11 @@ in
 
                 WifiMenu {
                     id: wifiMenu
+                    barWindow: bar
+                }
+
+                AudioMenu {
+                    id: audioMenu
                     barWindow: bar
                 }
 
@@ -2236,12 +2555,14 @@ in
                     anchors { right: parent.right; rightMargin: 12; top: parent.top; topMargin: 9 }
                     spacing: 8
 
-                    // громкость: клик - mute, колесо - громкость
+                    // громкость: лкм - меню звука, пкм - mute, колесо - громкость
                     Pill {
                         id: vol
                         readonly property var audio: Pipewire.defaultAudioSink?.audio ?? null
+                        readonly property bool micMuted: Pipewire.defaultAudioSource?.audio?.muted ?? false
                         visible: audio !== null
                         implicitWidth: volRow.implicitWidth + 28
+                        color: hovered || audioMenu.open ? Theme.bgHover : Theme.bg
 
                         RowLayout {
                             id: volRow
@@ -2256,9 +2577,25 @@ in
                                 text: vol.audio && vol.audio.muted ? "mute"
                                     : Math.round((vol.audio?.volume ?? 0) * 100) + "%"
                             }
+                            Glyph {
+                                visible: vol.micMuted
+                                text: "\uf131"
+                                color: Theme.pink
+                                font.pixelSize: Theme.iconSize
+                            }
                         }
 
-                        onClicked: mouse => { if (vol.audio) vol.audio.muted = !vol.audio.muted; }
+                        onClicked: mouse => {
+                            if (mouse.button === Qt.RightButton) {
+                                if (vol.audio) vol.audio.muted = !vol.audio.muted;
+                                return;
+                            }
+                            // меню по центру кнопки, но не вылезая за экран
+                            const c = vol.mapToItem(null, vol.width / 2, 0).x;
+                            const w = audioMenu.menuWidth;
+                            audioMenu.leftOffset = Math.max(12, Math.min(bar.width - w - 12, Math.round(c - w / 2)));
+                            audioMenu.open = !audioMenu.open;
+                        }
                         onScrolled: event => {
                             if (!vol.audio) return;
                             const step = event.angleDelta.y > 0 ? 0.05 : -0.05;

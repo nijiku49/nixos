@@ -65,7 +65,7 @@ in
     # обои и бар без анимаций, меню quickshell плавно появляются
     layerrule=noanim:1,layer_name:quickshell-wallpaper
     layerrule=noanim:1,layer_name:^quickshell$
-    layerrule=animation_type_open:fade,animation_type_close:fade,layer_name:quickshell-(launcher|style|wifi|clipboard|power|osd|notifications)
+    layerrule=animation_type_open:fade,animation_type_close:fade,layer_name:quickshell-(launcher|style|wifi|audio|clipboard|power|osd|notifications)
     # выделение области для скриншота - без анимаций, чтобы не попасть в кадр
     layerrule=noanim:1,noblur:1,layer_name:selection
 

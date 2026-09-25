@@ -123,6 +123,19 @@ in
     alsa.support32Bit = true;
     pulse.enable = true;
     wireplumber.enable = true;
+    # вебка ME6S показывается как колонки и перехватывает звук по умолчанию.
+    # выключаем только её выход, микрофон остаётся рабочим
+    wireplumber.extraConfig."50-hide-me6s-output" = {
+      "monitor.alsa.rules" = [
+        {
+          matches = [
+            { "node.name" = "~alsa_output.*ME6S.*"; }
+            { "node.description" = "~ME6S.*"; "media.class" = "Audio/Sink"; }
+          ];
+          actions.update-props."node.disabled" = true;
+        }
+      ];
+    };
   };
 
   services.upower.enable = true;
